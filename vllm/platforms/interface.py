@@ -708,4 +708,8 @@ class Platform:
 
 class UnspecifiedPlatform(Platform):
     _enum = PlatformEnum.UNSPECIFIED
-    device_type = ""
+    # Fallback platform when auto-detection fails. Prefer a safe default
+    # so that importing vLLM / printing CLI help does not crash in
+    # environments without a detectable accelerator.
+    device_name: str = "cpu"
+    device_type: str = "cpu"

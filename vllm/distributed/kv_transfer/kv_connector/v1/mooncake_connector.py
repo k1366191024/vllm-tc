@@ -79,6 +79,8 @@ class RecvReqMeta:
     local_block_ids: list[int]
     remote_host: str
     remote_port: int
+    # Prefill (producer) side request id used for matching send.
+    remote_request_id: ReqId
 
 
 @dataclass
@@ -101,10 +103,12 @@ class MooncakeConnectorMetadata(KVConnectorMetadata):
         load_remote_cache: bool = True,
     ):
         if load_remote_cache:
+            remote_request_id = kv_transfer_params.get("remote_request_id", request_id)
             self.reqs_to_recv[request_id] = RecvReqMeta(
                 local_block_ids=local_block_ids,
                 remote_host=kv_transfer_params["remote_host"],
                 remote_port=kv_transfer_params["remote_port"],
+                remote_request_id=remote_request_id,
             )
         else:
             self.reqs_to_send[request_id] = local_block_ids
@@ -378,6 +382,7 @@ class MooncakeConnectorScheduler:
             do_remote_decode=False,
             remote_host=self.side_channel_host,
             remote_port=self.side_channel_port,
+            remote_request_id=request.request_id,
         )
 
 
@@ -795,12 +800,17 @@ class MooncakeConnectorWorker:
 
         return finished_sending_reqs or None, finished_recving_reqs or None
 
-    async def receive_kv(self, path: str, req_blocks: list[tuple[str, list[int]]]):
-        req_ids, block_ids = map(list, zip(*req_blocks))
+    async def receive_kv(
+        self,
+        path: str,
+        req_blocks: list[tuple[ReqId, ReqId, list[int]]],
+    ):
+        # req_blocks: (local_req_id, remote_req_id, block_ids)
+        local_req_ids, remote_req_ids, block_ids = map(list, zip(*req_blocks))
         metadata = MooncakeAgentMetadata(
             remote_hostname=self.hostname,
             remote_port=self.rpc_port,
-            request_ids=req_ids,
+            request_ids=remote_req_ids,
             kv_caches_base_addr=self.kv_caches_base_addr,
             block_ids=block_ids,
         )
@@ -809,7 +819,11 @@ class MooncakeConnectorWorker:
         logger.debug(
             "Size of encoded MooncakeAgentMetadata: %d bytes", len(encoded_data)
         )
-        logger.debug("Sending kv transfer request for %s on path: %s", req_ids, path)
+        logger.debug(
+            "Sending kv transfer request for %s on path: %s",
+            remote_req_ids,
+            path,
+        )
 
         # Send query for the request.
         sock: zmq.asyncio.Socket = make_zmq_socket(
@@ -822,20 +836,24 @@ class MooncakeConnectorWorker:
             if ret_msg != TRANS_DONE:
                 logger.error(
                     "Error happens during tranfering kvcache for %s, see logs in prefiller.",  # noqa: E501
-                    req_ids,
+                    remote_req_ids,
                 )
                 return
         except zmq.ContextTerminated:
             logger.debug("ZMQ context terminated, exiting Mooncake receiver thread.")
         except Exception as e:
-            logger.error("MooncakeAgentMetadata transfer failed for %s: %s", req_ids, e)
+            logger.error(
+                "MooncakeAgentMetadata transfer failed for %s: %s",
+                remote_req_ids,
+                e,
+            )
             return
         finally:
             sock.close()
 
-        self.finished_recving_reqs.update(req_ids)
+        self.finished_recving_reqs.update(local_req_ids)
 
-        logger.debug("pulling kv_caches for %s finished", req_ids)
+        logger.debug("pulling kv_caches for %s finished", local_req_ids)
 
     def group_kv_pull(self, metadata: MooncakeConnectorMetadata):
         kv_pulls = defaultdict(list)
@@ -849,7 +867,9 @@ class MooncakeConnectorWorker:
             path = make_zmq_path(
                 "tcp", meta.remote_host, meta.remote_port + self.tp_rank
             )
-            kv_pulls[path].append((req_id, meta.local_block_ids))
+            kv_pulls[path].append(
+                (req_id, meta.remote_request_id, meta.local_block_ids)
+            )
 
         return kv_pulls
 

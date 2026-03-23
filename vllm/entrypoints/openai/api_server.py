@@ -19,7 +19,10 @@ from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any
 
-import model_hosting_container_standards.sagemaker as sagemaker_standards
+try:
+    import model_hosting_container_standards.sagemaker as sagemaker_standards
+except ModuleNotFoundError:  # Optional dependency.
+    sagemaker_standards = None
 import pydantic
 import uvloop
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -630,7 +633,8 @@ def build_app(args: Namespace) -> FastAPI:
                 f"Invalid middleware {middleware}. Must be a function or a class."
             )
 
-    app = sagemaker_standards.bootstrap(app)
+    if sagemaker_standards is not None:
+        app = sagemaker_standards.bootstrap(app)
 
     return app
 

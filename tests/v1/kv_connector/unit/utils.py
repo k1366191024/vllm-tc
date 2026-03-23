@@ -96,6 +96,7 @@ def create_vllm_config(
     cache_dtype: str = "auto",
     hf_overrides: dict[str, Any] | None = None,
     attention_backend: str | None = None,
+    kv_connector: str = "NixlConnector",
 ) -> VllmConfig:
     """Initialize VllmConfig For Testing."""
     model_config = ModelConfig(
@@ -103,6 +104,10 @@ def create_vllm_config(
         trust_remote_code=True,
         dtype=dtype,
         seed=42,
+        # Unit tests in this folder often build minimal local model configs
+        # without a tokenizer (e.g. config-only). Avoid hitting HF tokenizer
+        # loading paths during scheduler-only tests.
+        skip_tokenizer_init=True,
         hf_overrides=hf_overrides or {},
     )
     scheduler_config = SchedulerConfig(
@@ -121,7 +126,7 @@ def create_vllm_config(
         enable_prefix_caching=True,
     )
     kv_transfer_config = KVTransferConfig(
-        kv_connector="NixlConnector",
+        kv_connector=kv_connector,
         kv_role="kv_both",
         enable_permute_local_kv=enable_permute_local_kv,
         kv_connector_extra_config=kv_connector_extra_config or {},

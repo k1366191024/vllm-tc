@@ -1773,8 +1773,20 @@ class Scheduler(SchedulerInterface):
             self.finished_recving_kv_req_ids.add(req_id)
         for req_id in kv_connector_output.finished_sending or ():
             logger.debug("Finished sending KV transfer for request %s", req_id)
-            assert req_id in self.requests
-            self._free_blocks(self.requests[req_id])
+            request = self.requests.get(req_id)
+            if request is None:
+                logger.warning(
+                    "Ignoring finished_sending for unknown request %s",
+                    req_id,
+                )
+                continue
+            if not request.is_finished():
+                logger.warning(
+                    "Ignoring finished_sending for unfinished request %s",
+                    req_id,
+                )
+                continue
+            self._free_blocks(request)
 
     def _update_requests_with_invalid_blocks(
         self,
